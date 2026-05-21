@@ -1,0 +1,16 @@
+version: 2
+schema:
+  report_template: "skills/_shared/report-template.md"
+  rule_defaults:
+    min_line_length: 8
+    max_file_size_kb: 100
+    exclude_comments: true
+    context_lines: 1
+    confidence_threshold: 0.7
+cache_defaults:
+  ttl: session
+  key: "$file_path:$file_mtime"
+comment_prefixes:
+  - "#"
+  - "//"
+  - "--"

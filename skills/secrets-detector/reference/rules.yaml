@@ -1,0 +1,35 @@
+cache:
+  ttl: "session"
+  key: "$file_path:$file_mtime"
+
+batches:
+  - name: "python_js_secrets"
+    file_types: [".py", ".js", ".ts"]
+    rules: ["SEC-001"]
+
+rules:
+  - id: "SEC-001"
+    name: "Hardcoded Secrets"
+    severity: "critical"
+    fast_hash: "a1b2c3d4"
+    file_types: [".py", ".js", ".go", ".java", ".ts"]
+    min_line_length: 8
+    max_file_size_kb: 100
+    exclude_comments: true
+    confidence:
+      threshold: 0.7
+      signals:
+        - pattern: 'password\\s*[:=]\\s*["\'']'
+          weight: 0.3
+        - pattern: '["\''][^"\'' ]{8,}["\'']'
+          weight: 0.4
+        - pattern: '=\\s*env\\('
+          weight: -0.5
+    detection:
+      type: "hybrid"
+      regex_pattern: '\\b(password|api_key|secret|token)\\s*[:=]\\s*["\'']([^"\'']{8,})["\'']'
+      fallback_command: 'grep -E -n "\\b(password|api_key|secret|token)\\s*[:=]\\s*\"[^\"]{8,}\"" {{file}}'
+      fallback_min_size_kb: 500
+      context_lines: 1
+    remediation: "Move credentials to environment variables or a secrets manager."
+    references: ["CWE-798", "OWASP A07:2021"]
