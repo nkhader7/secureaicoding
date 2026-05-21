@@ -1,0 +1,1 @@
+../../../_shared/report-template.md
