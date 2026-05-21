@@ -1,8 +1,6 @@
-# Skills Template Standard
+# Skills Format
 
-All skills must follow this template so they can be discovered, executed, and reported consistently.
-
-## Required Folder Structure
+Use the following structure for every skill:
 
 ```text
 <skill-name>/
@@ -11,23 +9,15 @@ All skills must follow this template so they can be discovered, executed, and re
 │   └── report-template.md
 ```
 
-## Required Files
-
-### `reference/rules.md`
-- Defines the operational rules for the skill.
-- Must include usage constraints, expected inputs, execution steps, and output expectations.
-- `skills.md` is the canonical reference for requiring this file.
-
-### `reference/report-template.md`
-- Defines the report format produced by the skill.
-- When a skill is invoked, its output report should be generated in the structure defined by this template.
-- At minimum, include sections for `Summary`, `Findings`, and `Recommendations`.
-
 ## Example
 
 ```text
-sample/
+prompt-engineering/
 ├── reference/
 │   ├── rules.md
 │   └── report-template.md
 ```
+
+Each `reference/` folder must include:
+- `rules.md` for skill-specific rules and guidance.
+- `report-template.md` for the reporting template used by that skill.
