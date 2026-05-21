@@ -1,1 +1,65 @@
-version: 1
+version: 2
+
+# ─── Global defaults ────────────────────────────────────────────────────────
+defaults:
+  max_file_size_kb: 100
+  min_line_length: 8
+  context_lines: 1
+  exclude_comments: true
+  confidence_threshold: 0.7
+  cache:
+    ttl: session
+
+# ─── Comment prefix tokens (used when exclude_comments: true) ────────────────
+comment_tokens:
+  - "#"
+  - "//"
+  - "--"
+  - "/*"
+  - "*"
+  - "<!--"
+
+# ─── Shared negative patterns (high false-positive sources) ──────────────────
+# Rules may reference these in a `negative_patterns` list to subtract confidence.
+negative_patterns:
+  env_lookup:
+    pattern: '(os\.environ|getenv|process\.env|ENV\[|config\[)'
+    weight: -0.6
+    description: "Value comes from environment — not hardcoded"
+  placeholder:
+    pattern: '(CHANGEME|YOUR_|<|>|\.\.\.|example|placeholder|dummy|fake|test|sample)'
+    weight: -0.5
+    description: "Looks like a template placeholder or test value"
+  variable_ref:
+    pattern: '=\s*[A-Za-z_][A-Za-z0-9_]*\s*$'
+    weight: -0.4
+    description: "RHS is a variable reference, not a literal"
+
+# ─── Shared file-type batches ────────────────────────────────────────────────
+# Rules declare which batch(es) they belong to via `batches`.
+# The skill loads only the batches that match extensions found in the target.
+batches:
+  python:
+    file_types: [".py", ".pyw"]
+  javascript:
+    file_types: [".js", ".mjs", ".cjs"]
+  typescript:
+    file_types: [".ts", ".tsx"]
+  jvm:
+    file_types: [".java", ".kt", ".groovy", ".scala"]
+  go:
+    file_types: [".go"]
+  ruby:
+    file_types: [".rb", ".rake"]
+  php:
+    file_types: [".php", ".phtml"]
+  shell:
+    file_types: [".sh", ".bash", ".zsh", ".fish"]
+  config:
+    file_types: [".yaml", ".yml", ".toml", ".ini", ".env", ".cfg", ".conf"]
+  dotenv:
+    file_types: [".env", ".env.local", ".env.production", ".env.staging"]
+  infra:
+    file_types: [".tf", ".hcl", ".bicep", ".json"]
+  all:
+    file_types: []   # empty means apply to every extension
