@@ -1,0 +1,513 @@
+version: 2
+
+# ─── Batch definitions ────────────────────────────────────────────────────────
+# Each batch maps to a set of file extensions. The skill loads only batches
+# whose file_types overlap with extensions found in the scan target, avoiding
+# token cost on irrelevant file types.
+batches:
+  - name: web_backend
+    file_types: [".py", ".pyw", ".js", ".mjs", ".cjs", ".ts", ".tsx",
+                 ".go", ".rb", ".rake", ".php", ".phtml",
+                 ".java", ".kt", ".groovy", ".scala",
+                 ".cs", ".rs", ".swift"]
+    rules: [API2-001, API2-002, API2-003, API3-001, API3-002,
+            API7-001, API7-002, API8-001, API8-002, API10-001, API10-002]
+
+  - name: config_files
+    file_types: [".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+                 ".env", ".env.local", ".env.production", ".env.staging",
+                 ".json"]
+    rules: [API8-003, API8-004]
+
+  - name: infrastructure
+    file_types: [".tf", ".hcl", ".bicep"]
+    rules: [API8-003, API8-004]
+
+# ─── Cache settings ───────────────────────────────────────────────────────────
+cache:
+  ttl: session
+  key_template: "$file_path:$file_mtime"
+
+# ─── Rules ────────────────────────────────────────────────────────────────────
+
+rules:
+
+  # ── API2: Broken Authentication ─────────────────────────────────────────────
+
+  - id: API2-001
+    name: "JWT Signature Verification Disabled"
+    category: "API2:2023 Broken Authentication"
+    severity: critical
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".java", ".cs"]
+    max_file_size_kb: 200
+    min_line_length: 10
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          verify_signature\s*[=:]\s*[Ff]alse
+          | options\s*=\s*\{[^}]*verify_signature[^}]*False[^}]*\}
+          | IgnoreSignatureValidation\s*=\s*true
+          | \.decode\s*\([^)]*options\s*=\s*\{[^}]*"verify"\s*:\s*false
+          | ValidateIssuerSigningKey\s*=\s*false
+          | require_exp\s*=\s*False
+          | ignoreExpiration\s*:\s*true
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(jwt|token|bearer|auth)'
+          weight: 0.5
+          description: "Context confirms this is JWT handling code"
+      negative_patterns:
+        - pattern: '#\s*(noqa|nosec|skipcq)'
+          weight: -0.3
+          description: "Suppression annotation present"
+      threshold: 0.6
+    remediation: "Always verify JWT signatures. Remove verify_signature=False and ensure the algorithm allowlist contains only expected algorithms (e.g., ['HS256']). Never accept 'none' as a valid algorithm."
+    references:
+      - "CWE-287"
+      - "OWASP API2:2023"
+
+  - id: API2-002
+    name: "JWT 'none' Algorithm Accepted"
+    category: "API2:2023 Broken Authentication"
+    severity: critical
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".java", ".cs"]
+    max_file_size_kb: 200
+    min_line_length: 10
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: '(?i)algorithms\s*=\s*\[[^\]]*["\x27]none["\x27][^\]]*\]'
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(jwt|decode|verify)'
+          weight: 0.7
+          description: "Confirmed JWT context"
+      threshold: 0.6
+    remediation: "Remove 'none' from the algorithms list. Use an explicit allowlist: algorithms=['HS256'] or algorithms=['RS256']. Never mix symmetric and asymmetric algorithms in the same allowlist."
+    references:
+      - "CWE-287"
+      - "OWASP API2:2023"
+
+  - id: API2-003
+    name: "Hardcoded JWT Secret"
+    category: "API2:2023 Broken Authentication"
+    severity: critical
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".java", ".cs", ".env"]
+    max_file_size_kb: 200
+    min_line_length: 6
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?ix)(
+          jwt[_\-]?secret\s*[:=]\s*["\x27](secret|changeme|password|mysecret|your[_\-]?secret|supersecret|dev[_\-]?key)["\x27]
+          | SECRET_KEY\s*=\s*["\x27](secret|changeme|password|dev[_\-]?key|test)["\x27]
+          | jwt\.sign\s*\([^)]+,\s*["\x27](secret|changeme|password)["\x27]
+        )
+      context_lines: 1
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(jwt|token|sign|encode)'
+          weight: 0.5
+          description: "Token signing context confirmed"
+      negative_patterns:
+        - pattern: '(os\.environ|getenv|process\.env|ENV\[|config\[|\$\{|\$\()'
+          weight: -0.7
+          description: "Value loaded from environment — not hardcoded"
+        - pattern: '(CHANGEME|YOUR_|<|>|\.\.\.)'
+          weight: -0.5
+          description: "Placeholder value — likely template, not real code"
+      threshold: 0.65
+    remediation: "Store JWT signing keys in a secrets manager or environment variable. Rotate the secret immediately if it has been committed. Enforce a minimum key length of 256 bits for HMAC algorithms."
+    references:
+      - "CWE-798"
+      - "OWASP API2:2023"
+
+  # ── API3: Broken Object Property Level Authorization ─────────────────────────
+
+  - id: API3-001
+    name: "Mass Assignment — Entire Request Body Bound to Model"
+    category: "API3:2023 Broken Object Property Level Authorization"
+    severity: high
+    file_types: [".js", ".mjs", ".ts", ".py", ".rb", ".php", ".java", ".cs"]
+    max_file_size_kb: 200
+    min_line_length: 8
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          Object\.assign\s*\(\s*\w+\s*,\s*req\.body\s*\)
+          | \.update\s*\(\s*request\.data\s*\)
+          | \.update_attributes\s*\(\s*params\s*\)
+          | \.assign_attributes\s*\(\s*params\s*\)
+          | params\.permit!\s*$
+          | model_from_dict\s*\(\s*data\s*\)
+          | \.update\s*\(\s*\*\*request\.json\s*\)
+          | BeanUtils\.copyProperties\s*\([^,]+,\s*request\b
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(model|entity|user|account|record|schema)'
+          weight: 0.4
+          description: "Model/entity context present"
+      negative_patterns:
+        - pattern: '(?i)(test|spec|fixture|mock|stub)'
+          weight: -0.4
+          description: "Likely test code"
+      threshold: 0.55
+    remediation: "Explicitly allowlist the fields that callers are permitted to set. Use a serializer/schema with declared writable fields. Never pass req.body or request.data directly to a model update."
+    references:
+      - "CWE-915"
+      - "OWASP API3:2023"
+
+  - id: API3-002
+    name: "Unrestricted Model Serialization — Full Object Returned"
+    category: "API3:2023 Broken Object Property Level Authorization"
+    severity: high
+    file_types: [".py", ".rb", ".php", ".java", ".cs", ".js", ".ts"]
+    max_file_size_kb: 200
+    min_line_length: 8
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          jsonify\s*\(\s*\w+\.__dict__\s*\)
+          | to_json\s*\(\s*\)\s*(?!.*only|.*except)
+          | \.as_json\s*\(\s*\)\s*$
+          | serialize\s*\(\s*\)\s*$
+          | JSON\.stringify\s*\(\s*\w+\s*\)\s*(?!.*pick|.*omit)
+          | \.toObject\s*\(\s*\)\s*$
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(return|render|response|json|send)'
+          weight: 0.4
+          description: "Value is being sent to client"
+        - pattern: '(?i)(user|account|profile|order|invoice)'
+          weight: 0.3
+          description: "Sensitive model type"
+      negative_patterns:
+        - pattern: '(?i)(test|spec|fixture|mock)'
+          weight: -0.4
+          description: "Likely test code"
+        - pattern: '(?i)(only:|except:|fields:|select|pick|omit)'
+          weight: -0.6
+          description: "Field filtering applied"
+      threshold: 0.6
+    remediation: "Return only the fields the caller needs. Use an explicit serializer with a declared read-only field list. Never return __dict__, .toObject(), or .serialize() without filtering sensitive fields (password_hash, is_admin, internal_score, etc.)."
+    references:
+      - "CWE-213"
+      - "OWASP API3:2023"
+
+  # ── API7: Server-Side Request Forgery ────────────────────────────────────────
+
+  - id: API7-001
+    name: "SSRF — HTTP Fetch with User-Controlled URL"
+    category: "API7:2023 Server Side Request Forgery"
+    severity: high
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".php", ".java", ".cs"]
+    max_file_size_kb: 200
+    min_line_length: 10
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          requests\.(get|post|put|patch|delete)\s*\(\s*(request\.|req\.|params\.|body\.|args\.|data\.)
+          | axios\.(get|post|put)\s*\(\s*(req\.|request\.|params\.)
+          | fetch\s*\(\s*(req\.|request\.|params\.)
+          | urllib\.request\.urlopen\s*\(\s*(request\.|req\.|params\.)
+          | http\.(get|post)\s*\(\s*(req\.|request\.)
+          | curl_exec\s*\(.*\$_(GET|POST|REQUEST)
+          | RestTemplate.*getForObject\s*\([^)]*request\b
+        )
+      context_lines: 3
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(url|uri|href|endpoint|callback|webhook|redirect)'
+          weight: 0.5
+          description: "URL-related variable name"
+        - pattern: '(?i)(user|client|body|param|input|request)'
+          weight: 0.4
+          description: "Value sourced from user input"
+      negative_patterns:
+        - pattern: '(?i)(allowlist|whitelist|validate|parse|urlparse|ALLOWED)'
+          weight: -0.5
+          description: "URL validation present — verify it is complete"
+        - pattern: '(?i)(test|spec|mock|fixture)'
+          weight: -0.4
+          description: "Likely test code"
+      threshold: 0.6
+    remediation: "Validate all user-supplied URLs against an explicit allowlist of permitted hosts and schemes before issuing the request. Disable redirect following. Never fetch from arbitrary user-supplied destinations."
+    references:
+      - "CWE-918"
+      - "OWASP API7:2023"
+
+  - id: API7-002
+    name: "SSRF — Redirect Following Enabled on Outbound HTTP Client"
+    category: "API7:2023 Server Side Request Forgery"
+    severity: medium
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".java"]
+    max_file_size_kb: 200
+    min_line_length: 8
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          allow_redirects\s*=\s*True
+          | maxRedirects\s*:\s*[1-9][0-9]*
+          | followRedirects\s*:\s*true
+          | \.setFollowRedirects\s*\(\s*true\s*\)
+          | CheckRedirect\s*:\s*nil
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(url|uri|fetch|request|http)'
+          weight: 0.4
+          description: "HTTP client context"
+        - pattern: '(?i)(user|body|param|input|webhook|callback)'
+          weight: 0.4
+          description: "User-influenced URL possible"
+      threshold: 0.65
+    remediation: "Set allow_redirects=False (Python requests) or equivalent. If redirects are required, validate the redirect destination against the same allowlist as the original URL."
+    references:
+      - "CWE-918"
+      - "OWASP API7:2023"
+
+  # ── API8: Security Misconfiguration ─────────────────────────────────────────
+
+  - id: API8-001
+    name: "Debug Mode Enabled"
+    category: "API8:2023 Security Misconfiguration"
+    severity: high
+    file_types: [".py", ".js", ".ts", ".rb", ".php", ".java", ".cs",
+                 ".yaml", ".yml", ".toml", ".env", ".cfg", ".conf", ".ini"]
+    max_file_size_kb: 200
+    min_line_length: 5
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?ix)(
+          DEBUG\s*=\s*True
+          | debug\s*:\s*true
+          | APP_DEBUG\s*=\s*true
+          | FLASK_DEBUG\s*=\s*1
+          | NODE_ENV\s*=\s*["\x27]?development["\x27]?
+          | app\.set\s*\(\s*["\x27]env["\x27]\s*,\s*["\x27]development["\x27]\s*\)
+          | app\.run\s*\([^)]*debug\s*=\s*True
+          | application\.run\s*\([^)]*debug\s*=\s*true
+        )
+      context_lines: 1
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(production|prod|live)'
+          weight: 0.6
+          description: "File is explicitly for production environment"
+      negative_patterns:
+        - pattern: '(?i)(\.example|\.sample|\.template|\.test|spec|mock)'
+          weight: -0.6
+          description: "Example or test file — not production config"
+        - pattern: '(os\.environ|getenv|process\.env|ENV\[|\$\{)'
+          weight: -0.5
+          description: "Value loaded from environment at runtime"
+      threshold: 0.55
+    remediation: "Set DEBUG=False in all production and staging configurations. Use environment-specific config files and ensure debug flags are never hardcoded to True in non-development files."
+    references:
+      - "CWE-16"
+      - "OWASP API8:2023"
+
+  - id: API8-002
+    name: "CORS Wildcard on API Endpoint"
+    category: "API8:2023 Security Misconfiguration"
+    severity: high
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".php", ".java", ".cs"]
+    max_file_size_kb: 200
+    min_line_length: 8
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?ix)(
+          Access-Control-Allow-Origin["\x27]?\s*[:=,]\s*["\x27]?\*["\x27]?
+          | origins\s*=\s*["\x27]\*["\x27]
+          | origins\s*:\s*["\x27]\*["\x27]
+          | allow_origins\s*=\s*\[\s*["\x27]\*["\x27]\s*\]
+          | CORS\s*\([^)]*\*[^)]*\)
+          | AllowAnyOrigin\s*\(\s*\)
+          | cors\.New\s*\([^)]*AllowedOrigins.*\*
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(api|route|endpoint|server|app)'
+          weight: 0.4
+          description: "API or server context"
+        - pattern: '(?i)(auth|token|session|cookie|credential)'
+          weight: 0.5
+          description: "Authenticated endpoints with wildcard CORS are high risk"
+      negative_patterns:
+        - pattern: '(?i)(public|static|asset|cdn|open)'
+          weight: -0.3
+          description: "Potentially intentional for a public CDN — verify"
+        - pattern: '(?i)(test|spec|mock|fixture)'
+          weight: -0.4
+          description: "Likely test code"
+      threshold: 0.55
+    remediation: "Replace the wildcard with an explicit allowlist of trusted origins. For authenticated APIs, never use Access-Control-Allow-Origin: *. Use Access-Control-Allow-Credentials: true only with specific origins."
+    references:
+      - "CWE-942"
+      - "OWASP API8:2023"
+
+  - id: API8-003
+    name: "Stack Trace Exposed in Error Response"
+    category: "API8:2023 Security Misconfiguration"
+    severity: medium
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".php", ".java", ".cs"]
+    max_file_size_kb: 200
+    min_line_length: 8
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?ix)(
+          traceback\.format_exc\s*\(\s*\).*response
+          | str\s*\(\s*e\s*\).*jsonify
+          | error\s*:\s*err\.stack
+          | ["\x27]stackTrace["\x27]\s*:\s*e\.getStackTrace
+          | exception\.getMessage\s*\(\s*\).*response
+          | e\.printStackTrace\s*\(\s*response
+          | message\s*:\s*error\.message.*res\.json
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(response|json|render|return|send|write)'
+          weight: 0.5
+          description: "Exception data flows to response"
+      threshold: 0.6
+    remediation: "Return a generic error message to clients (e.g., 'Internal server error'). Log the full stack trace server-side only. Never include exception messages, class names, or stack frames in API responses."
+    references:
+      - "CWE-209"
+      - "OWASP API8:2023"
+
+  - id: API8-004
+    name: "Cleartext HTTP for Internal Service Communication"
+    category: "API8:2023 Security Misconfiguration"
+    severity: medium
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".java", ".cs",
+                 ".yaml", ".yml", ".toml", ".env", ".tf", ".hcl"]
+    max_file_size_kb: 200
+    min_line_length: 8
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          ["\x27]http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0)[a-zA-Z0-9.\-]+(?:\.[a-zA-Z]{2,})["\x27]
+          | base_url\s*=\s*["\x27]http://(?!localhost|127\.)
+          | API_URL\s*=\s*http://(?!localhost|127\.)
+          | SERVICE_URL\s*=\s*http://
+        )
+      context_lines: 1
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(api|service|endpoint|url|host)'
+          weight: 0.4
+          description: "Service URL context"
+      negative_patterns:
+        - pattern: '(?i)(localhost|127\.0\.0\.1|0\.0\.0\.0|local|dev)'
+          weight: -0.6
+          description: "Loopback address — acceptable without TLS"
+        - pattern: '(?i)(test|spec|fixture|example|sample)'
+          weight: -0.5
+          description: "Test or example file"
+        - pattern: '(os\.environ|getenv|process\.env|\$\{|\$\()'
+          weight: -0.4
+          description: "URL loaded from environment"
+      threshold: 0.6
+    remediation: "Use HTTPS for all service-to-service communication, including internal microservices. Enforce TLS at the infrastructure level (service mesh mTLS) in addition to application-level checks."
+    references:
+      - "CWE-319"
+      - "OWASP API8:2023"
+
+  # ── API10: Unsafe Consumption of APIs ────────────────────────────────────────
+
+  - id: API10-001
+    name: "Third-Party Response Data Used Without Validation"
+    category: "API10:2023 Unsafe Consumption of APIs"
+    severity: high
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".php", ".java"]
+    max_file_size_kb: 200
+    min_line_length: 10
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          requests\.(get|post)\s*\([^)]+\)\.json\s*\(\s*\)\s*\n[^\n]*(?:execute|query|render|format|eval|exec)\s*\(
+          | axios\.(get|post)\s*\([^)]+\)\s*\.then[^{]*\{\s*[^}]*(?:db|sql|query|exec)\s*[(`]
+          | fetch\s*\([^)]+\)\s*\.then[^.]*\.json\s*\(\s*\)\s*\.then[^{]*\{\s*[^}]*(?:innerHTML|document\.write|eval)
+        )
+      context_lines: 3
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(third.?party|external|partner|upstream|integration)'
+          weight: 0.3
+          description: "External service context"
+        - pattern: '(?i)(execute|query|render|eval|innerHTML|exec|format)'
+          weight: 0.6
+          description: "Dangerous sink — data flows into SQL/template/eval"
+      threshold: 0.65
+    remediation: "Apply the same input validation to third-party API responses as you would to user input. Validate against a schema before using the data. Never interpolate external data directly into SQL queries, HTML, or OS commands."
+    references:
+      - "CWE-20"
+      - "CWE-346"
+      - "OWASP API10:2023"
+
+  - id: API10-002
+    name: "Outbound HTTP Client Without Timeout"
+    category: "API10:2023 Unsafe Consumption of APIs"
+    severity: medium
+    file_types: [".py", ".js", ".mjs", ".ts", ".go", ".rb", ".java"]
+    max_file_size_kb: 200
+    min_line_length: 8
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          requests\.(get|post|put|patch|delete)\s*\([^)]+\)(?<!\btimeout\b)
+          | axios\.(get|post|put)\s*\(\s*["\x27][^"']+["\x27]\s*\)(?!\s*,\s*\{[^}]*timeout)
+          | http\.get\s*\(\s*["\x27][^"']+["\x27]\s*,\s*function
+          | fetch\s*\(\s*["\x27][^"']+["\x27]\s*\)(?!\s*,\s*\{[^}]*signal)
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(http|https|url|api|endpoint|service)'
+          weight: 0.4
+          description: "HTTP client call context"
+      negative_patterns:
+        - pattern: '(?i)(timeout|time_out|deadline|context\.with)'
+          weight: -0.7
+          description: "Timeout configured — false positive"
+        - pattern: '(?i)(test|spec|mock|fixture)'
+          weight: -0.4
+          description: "Likely test code"
+      threshold: 0.65
+    remediation: "Always specify a timeout on outbound HTTP calls (e.g., requests.get(url, timeout=10)). Use a short connect timeout (2–5s) and a longer read timeout appropriate to the SLA. Missing timeouts allow a slow/unresponsive third-party to exhaust connection pools."
+    references:
+      - "CWE-400"
+      - "OWASP API10:2023"
