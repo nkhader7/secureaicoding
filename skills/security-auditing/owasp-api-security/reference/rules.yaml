@@ -6,22 +6,20 @@ version: 2
 # token cost on irrelevant file types.
 batches:
   - name: web_backend
-    file_types: [".py", ".pyw", ".js", ".mjs", ".cjs", ".ts", ".tsx",
+    file_types: [".py", ".js", ".mjs", ".ts",
                  ".go", ".rb", ".rake", ".php", ".phtml",
                  ".java", ".kt", ".groovy", ".scala",
-                 ".cs", ".rs", ".swift"]
+                 ".cs"]
     rules: [API2-001, API2-002, API2-003, API3-001, API3-002,
             API7-001, API7-002, API8-001, API8-002, API10-001, API10-002]
 
   - name: config_files
-    file_types: [".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
-                 ".env", ".env.local", ".env.production", ".env.staging",
-                 ".json"]
-    rules: [API8-003, API8-004]
+    file_types: [".yaml", ".yml", ".toml", ".env"]
+    rules: [API8-004]
 
   - name: infrastructure
-    file_types: [".tf", ".hcl", ".bicep"]
-    rules: [API8-003, API8-004]
+    file_types: [".tf", ".hcl"]
+    rules: [API8-004]
 
 # ─── Cache settings ───────────────────────────────────────────────────────────
 cache:
