@@ -330,7 +330,7 @@ db.execute("SELECT * FROM users WHERE email = %s", (email,))
 - List all outbound HTTP clients; verify TLS, timeouts, redirect policy, and response validation
 
 **Phase 7: Report**
-- Use `_shared/report-template.md` for findings
+- Use [report-template.md](../../_shared/report-template.md) for findings
 - Tag each finding with API category (API1–API10), CWE, and severity
 - Include evidence: file path, line number, and a concrete exploit scenario
 
