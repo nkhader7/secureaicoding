@@ -1,0 +1,156 @@
+version: 2
+format: yaml
+
+# YAML advantages for SAST rules:
+#   - Block scalars (|, >) for readable multi-line regex patterns
+#   - Inline comments document each field's purpose
+#   - Anchors (&) and aliases (*) for DRY shared patterns
+#   - Compact syntax: no closing braces or brackets required
+#   - Widely supported by security tooling (Semgrep, etc.)
+
+# ── Shared anchors ────────────────────────────────────────────────────────────
+_shared:
+  negative_env: &neg_env
+    pattern: '(os\.environ|getenv|process\.env|ENV\[|\$\{|\$\()'
+    weight: -0.6
+    description: "Value loaded from environment — not hardcoded"
+  negative_test: &neg_test
+    pattern: '(?i)(test|spec|fixture|mock|stub)'
+    weight: -0.4
+    description: "Test file — lower confidence"
+
+# ── Rules ─────────────────────────────────────────────────────────────────────
+rules:
+
+  - id: API2-001
+    name: "JWT Signature Verification Disabled"
+    category: "API2:2023 Broken Authentication"
+    severity: critical
+    file_types: [".py", ".js", ".ts", ".go", ".java", ".cs", ".rb"]
+    exclude_comments: true
+    detection:
+      type: regex
+      # Block scalar keeps the alternation readable without escaping newlines.
+      regex_pattern: |
+        (?ix)(
+          verify_signature\s*[=:]\s*[Ff]alse
+          | IgnoreSignatureValidation\s*=\s*true
+          | ignoreExpiration\s*:\s*true
+          | require_exp\s*=\s*False
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(jwt|token|bearer|decode)'
+          weight: 0.6
+          description: "JWT context confirmed"
+      negative_patterns:
+        - *neg_test
+      threshold: 0.6
+    remediation: "Remove verify_signature=False. Enforce a strict algorithm allowlist: algorithms=['HS256']."
+    references: ["CWE-287", "OWASP API2:2023"]
+
+  - id: API2-002
+    name: "JWT 'none' Algorithm Accepted"
+    category: "API2:2023 Broken Authentication"
+    severity: critical
+    file_types: [".py", ".js", ".ts", ".go", ".java", ".cs", ".rb"]
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: "(?i)algorithms\\s*=\\s*\\[[^\\]]*['\"]none['\"]"
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(jwt|decode|verify)'
+          weight: 0.7
+          description: "JWT decode context confirmed"
+      threshold: 0.6
+    remediation: "Remove 'none' from algorithm list. Never mix symmetric and asymmetric algorithms."
+    references: ["CWE-287", "OWASP API2:2023"]
+
+  - id: API3-001
+    name: "Mass Assignment — req.body Bound to Model"
+    category: "API3:2023 Broken Object Property Level Authorization"
+    severity: high
+    file_types: [".js", ".mjs", ".ts", ".py", ".rb", ".php", ".java"]
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          Object\.assign\s*\(\s*\w+\s*,\s*req\.body\s*\)
+          | \.update\s*\(\s*request\.data\s*\)
+          | \.update_attributes\s*\(\s*params\s*\)
+          | params\.permit!\s*$
+        )
+      context_lines: 2
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(model|entity|user|account|record)'
+          weight: 0.4
+          description: "Model context present"
+      negative_patterns:
+        - *neg_test
+      threshold: 0.55
+    remediation: "Allowlist writable fields explicitly. Never pass req.body directly to model updates."
+    references: ["CWE-915", "OWASP API3:2023"]
+
+  - id: API7-001
+    name: "SSRF — User-Controlled URL Fetched"
+    category: "API7:2023 Server Side Request Forgery"
+    severity: high
+    file_types: [".py", ".js", ".ts", ".go", ".rb", ".php", ".java"]
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?x)(
+          requests\.(get|post|put)\s*\(\s*(request\.|req\.)
+          | axios\.(get|post)\s*\(\s*(req\.|request\.)
+          | urllib\.request\.urlopen\s*\(\s*(request\.|req\.)
+        )
+      context_lines: 3
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(url|uri|href|callback|webhook)'
+          weight: 0.5
+          description: "URL-related variable"
+      negative_patterns:
+        - pattern: '(?i)(allowlist|whitelist|validate|ALLOWED)'
+          weight: -0.5
+          description: "Validation present — verify completeness"
+        - *neg_test
+      threshold: 0.6
+    remediation: "Validate destination against an explicit allowlist. Set allow_redirects=False."
+    references: ["CWE-918", "OWASP API7:2023"]
+
+  - id: API8-001
+    name: "Debug Mode Hardcoded True"
+    category: "API8:2023 Security Misconfiguration"
+    severity: high
+    file_types: [".py", ".js", ".ts", ".rb", ".php", ".yaml", ".yml", ".env", ".cfg"]
+    exclude_comments: true
+    detection:
+      type: regex
+      regex_pattern: |
+        (?ix)(
+          ^\s*DEBUG\s*=\s*True
+          | app\.run\s*\([^)]*debug\s*=\s*True
+          | debug\s*:\s*true
+          | APP_DEBUG\s*=\s*true
+        )
+      context_lines: 1
+    confidence:
+      positive_patterns:
+        - pattern: '(?i)(production|prod|live)'
+          weight: 0.6
+          description: "Explicitly production context"
+      negative_patterns:
+        - *neg_env
+        - pattern: '(?i)(\.example|\.sample|\.template|test|spec)'
+          weight: -0.6
+          description: "Example or test file"
+      threshold: 0.5
+    remediation: "Read DEBUG from environment. Default to False. Never hardcode True."
+    references: ["CWE-16", "OWASP API8:2023"]

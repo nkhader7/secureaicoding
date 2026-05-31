@@ -1,0 +1,127 @@
+{
+  "format": "json",
+  "version": 2,
+  "_note": "JSON limitations: no comments, no multi-line strings, no anchors/aliases. Regex backslashes need double-escaping (\\s instead of \\s). Verbose for nested structures.",
+  "rules": [
+    {
+      "id": "API2-001",
+      "name": "JWT Signature Verification Disabled",
+      "category": "API2:2023 Broken Authentication",
+      "severity": "critical",
+      "file_types": [".py", ".js", ".ts", ".go", ".java", ".cs", ".rb"],
+      "exclude_comments": true,
+      "detection": {
+        "type": "regex",
+        "regex_pattern": "(?ix)(verify_signature\\s*[=:]\\s*[Ff]alse|IgnoreSignatureValidation\\s*=\\s*true|ignoreExpiration\\s*:\\s*true|require_exp\\s*=\\s*False)",
+        "context_lines": 2
+      },
+      "confidence": {
+        "threshold": 0.6,
+        "positive_patterns": [
+          {"pattern": "(?i)(jwt|token|bearer|decode)", "weight": 0.6, "description": "JWT context confirmed"}
+        ],
+        "negative_patterns": [
+          {"pattern": "(?i)(test|spec|fixture|mock|stub)", "weight": -0.4, "description": "Test file"}
+        ]
+      },
+      "remediation": "Remove verify_signature=False. Enforce algorithms=['HS256'].",
+      "references": ["CWE-287", "OWASP API2:2023"]
+    },
+    {
+      "id": "API2-002",
+      "name": "JWT 'none' Algorithm Accepted",
+      "category": "API2:2023 Broken Authentication",
+      "severity": "critical",
+      "file_types": [".py", ".js", ".ts", ".go", ".java", ".cs", ".rb"],
+      "exclude_comments": true,
+      "detection": {
+        "type": "regex",
+        "regex_pattern": "(?i)algorithms\\s*=\\s*\\[[^\\]]*['\"]none['\"]",
+        "context_lines": 2
+      },
+      "confidence": {
+        "threshold": 0.6,
+        "positive_patterns": [
+          {"pattern": "(?i)(jwt|decode|verify)", "weight": 0.7, "description": "JWT decode context"}
+        ],
+        "negative_patterns": []
+      },
+      "remediation": "Remove 'none' from algorithm list.",
+      "references": ["CWE-287", "OWASP API2:2023"]
+    },
+    {
+      "id": "API3-001",
+      "name": "Mass Assignment — req.body Bound to Model",
+      "category": "API3:2023 Broken Object Property Level Authorization",
+      "severity": "high",
+      "file_types": [".js", ".mjs", ".ts", ".py", ".rb", ".php", ".java"],
+      "exclude_comments": true,
+      "detection": {
+        "type": "regex",
+        "regex_pattern": "(?x)(Object\\.assign\\s*\\(\\s*\\w+\\s*,\\s*req\\.body\\s*\\)|\\.update\\s*\\(\\s*request\\.data\\s*\\)|\\.update_attributes\\s*\\(\\s*params\\s*\\)|params\\.permit!\\s*$)",
+        "context_lines": 2
+      },
+      "confidence": {
+        "threshold": 0.55,
+        "positive_patterns": [
+          {"pattern": "(?i)(model|entity|user|account|record)", "weight": 0.4, "description": "Model context"}
+        ],
+        "negative_patterns": [
+          {"pattern": "(?i)(test|spec|fixture|mock|stub)", "weight": -0.4, "description": "Test file"}
+        ]
+      },
+      "remediation": "Allowlist writable fields. Never pass req.body to model updates.",
+      "references": ["CWE-915", "OWASP API3:2023"]
+    },
+    {
+      "id": "API7-001",
+      "name": "SSRF — User-Controlled URL Fetched",
+      "category": "API7:2023 Server Side Request Forgery",
+      "severity": "high",
+      "file_types": [".py", ".js", ".ts", ".go", ".rb", ".php", ".java"],
+      "exclude_comments": true,
+      "detection": {
+        "type": "regex",
+        "regex_pattern": "(?x)(requests\\.(get|post|put)\\s*\\(\\s*(request\\.|req\\.)|axios\\.(get|post)\\s*\\(\\s*(req\\.|request\\.)|urllib\\.request\\.urlopen\\s*\\(\\s*(request\\.|req\\.))",
+        "context_lines": 3
+      },
+      "confidence": {
+        "threshold": 0.6,
+        "positive_patterns": [
+          {"pattern": "(?i)(url|uri|href|callback|webhook)", "weight": 0.5, "description": "URL variable"}
+        ],
+        "negative_patterns": [
+          {"pattern": "(?i)(allowlist|whitelist|validate|ALLOWED)", "weight": -0.5, "description": "Validation present"},
+          {"pattern": "(?i)(test|spec|fixture|mock|stub)", "weight": -0.4, "description": "Test file"}
+        ]
+      },
+      "remediation": "Validate destination against an allowlist. Set allow_redirects=False.",
+      "references": ["CWE-918", "OWASP API7:2023"]
+    },
+    {
+      "id": "API8-001",
+      "name": "Debug Mode Hardcoded True",
+      "category": "API8:2023 Security Misconfiguration",
+      "severity": "high",
+      "file_types": [".py", ".js", ".ts", ".rb", ".php", ".yaml", ".yml", ".env", ".cfg"],
+      "exclude_comments": true,
+      "detection": {
+        "type": "regex",
+        "regex_pattern": "(?ix)(^\\s*DEBUG\\s*=\\s*True|app\\.run\\s*\\([^)]*debug\\s*=\\s*True|debug\\s*:\\s*true|APP_DEBUG\\s*=\\s*true)",
+        "context_lines": 1
+      },
+      "confidence": {
+        "threshold": 0.5,
+        "positive_patterns": [
+          {"pattern": "(?i)(production|prod|live)", "weight": 0.6, "description": "Production context"}
+        ],
+        "negative_patterns": [
+          {"pattern": "(os\\.environ|getenv|process\\.env|ENV\\[|\\$\\{|\\$\\()", "weight": -0.6, "description": "From environment"},
+          {"pattern": "(?i)(\\.example|\\.sample|\\.template|test|spec)", "weight": -0.6, "description": "Example file"}
+        ]
+      },
+      "remediation": "Read DEBUG from environment. Default to False.",
+      "references": ["CWE-16", "OWASP API8:2023"]
+    }
+  ]
+}

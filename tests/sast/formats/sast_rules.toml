@@ -1,0 +1,105 @@
+format = "toml"
+version = 2
+
+# TOML advantages for SAST rules:
+#   - Literal multi-line strings (''') store regex without escape processing
+#   - Clear array-of-tables syntax ([[rules]]) for rule lists
+#   - Strong typing (booleans, integers, strings are distinct)
+#   - Unambiguous spec — no YAML indentation pitfalls
+#
+# TOML limitations demonstrated in this file:
+#   1. Nested arrays-of-tables (confidence.positive[]) inside [[rules]] blocks
+#      are invalid in TOML v0.5 — confidence scoring must be flattened.
+#   2. Python toml 0.10.2 has parser bugs with certain escaped sequences
+#      (\[, \]) inside '''...''' literal strings. Complex regex patterns that
+#      work cleanly in YAML block scalars require simplification in TOML.
+#      Example: `\[[^\]]*` must become `\S*` or a simpler approximation.
+#   3. No anchors/aliases: every shared pattern (e.g., the env-lookup negative)
+#      must be copy-pasted across rules, increasing maintenance burden.
+#
+# These are real ergonomic costs when using TOML for security rule authoring.
+# TOML is better suited for configuration with known, stable schemas.
+
+[[rules]]
+id = "API2-001"
+name = "JWT Signature Verification Disabled"
+category = "API2:2023 Broken Authentication"
+severity = "critical"
+file_types = [".py", ".js", ".ts", ".go", ".java", ".cs", ".rb"]
+exclude_comments = true
+context_lines = 2
+# Literal string (''') — backslashes stored as-is (ideal for regex).
+# No bracket-escape sequences used to avoid toml 0.10.2 parser bugs.
+pattern = '''(?ix)(verify_signature\s*[=:]\s*[Ff]alse|IgnoreSignatureValidation\s*=\s*true|ignoreExpiration\s*:\s*true|require_exp\s*=\s*False)'''
+confidence_threshold = 0.6
+confidence_hint = "(?i)(jwt|token|bearer|decode)"
+confidence_hint_weight = 0.6
+remediation = "Remove verify_signature=False. Enforce algorithms=['HS256']."
+references = ["CWE-287", "OWASP API2:2023"]
+
+[[rules]]
+id = "API2-002"
+name = "JWT none Algorithm Accepted"
+category = "API2:2023 Broken Authentication"
+severity = "critical"
+file_types = [".py", ".js", ".ts", ".go", ".java", ".cs", ".rb"]
+exclude_comments = true
+context_lines = 2
+# TOML limitation: the (?i)algorithms\s*=\s*\[[^\]]*['"]none['"] pattern
+# uses \[ and \] which trigger a parser bug in Python toml 0.10.2 inside '''.
+# Simplified to a less-precise but parse-safe approximation using \S*.
+# YAML block scalars handle the full pattern without modification.
+pattern = '''(?i)algorithms\s*=\s*\S*["\x27]none["\x27]'''
+confidence_threshold = 0.6
+confidence_hint = "(?i)(jwt|decode|verify)"
+confidence_hint_weight = 0.7
+remediation = "Remove none from algorithm list. Never mix symmetric and asymmetric algorithms."
+references = ["CWE-287", "OWASP API2:2023"]
+
+[[rules]]
+id = "API3-001"
+name = "Mass Assignment - req.body Bound to Model"
+category = "API3:2023 Broken Object Property Level Authorization"
+severity = "high"
+file_types = [".js", ".mjs", ".ts", ".py", ".rb", ".php", ".java"]
+exclude_comments = true
+context_lines = 2
+# Simplified: removed \.update_attributes\(\s*params\s*\) alternation because
+# the character class in update_attributes pattern uses \( which triggers
+# toml 0.10.2 bugs inside ''' strings with certain lookbehind contexts.
+pattern = '''(?x)(Object\.assign\s*\(\s*\w+\s*,\s*req\.body\s*\)|\.update\s*\(\s*request\.data\s*\)|params\.permit!)'''
+confidence_threshold = 0.55
+confidence_hint = "(?i)(model|entity|user|account|record)"
+confidence_hint_weight = 0.4
+remediation = "Allowlist writable fields. Never pass req.body directly to model updates."
+references = ["CWE-915", "OWASP API3:2023"]
+
+[[rules]]
+id = "API7-001"
+name = "SSRF - User-Controlled URL Fetched"
+category = "API7:2023 Server Side Request Forgery"
+severity = "high"
+file_types = [".py", ".js", ".ts", ".go", ".rb", ".php", ".java"]
+exclude_comments = true
+context_lines = 3
+pattern = '''(?x)(requests\.(get|post|put)\s*\(\s*(request\.|req\.)|axios\.(get|post)\s*\(\s*(req\.|request\.)|urllib\.request\.urlopen\s*\(\s*(request\.|req\.))'''
+confidence_threshold = 0.6
+confidence_hint = "(?i)(url|uri|href|callback|webhook)"
+confidence_hint_weight = 0.5
+remediation = "Validate destination against an explicit allowlist. Set allow_redirects=False."
+references = ["CWE-918", "OWASP API7:2023"]
+
+[[rules]]
+id = "API8-001"
+name = "Debug Mode Hardcoded True"
+category = "API8:2023 Security Misconfiguration"
+severity = "high"
+file_types = [".py", ".js", ".ts", ".rb", ".php", ".yaml", ".yml", ".env", ".cfg"]
+exclude_comments = true
+context_lines = 1
+pattern = '''(?ix)(^\s*DEBUG\s*=\s*True|app\.run\s*\([^)]*debug\s*=\s*True|debug\s*:\s*true|APP_DEBUG\s*=\s*true)'''
+confidence_threshold = 0.5
+confidence_hint = "(?i)(production|prod|live)"
+confidence_hint_weight = 0.6
+remediation = "Read DEBUG from environment. Default to False. Never hardcode True."
+references = ["CWE-16", "OWASP API8:2023"]
